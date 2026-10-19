@@ -10,20 +10,29 @@ function randomNonce() {
   return btoa(binary);
 }
 
-function securityHeaders(nonce) {
+function commonSecurityHeaders() {
   return {
-    'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store',
     'Referrer-Policy': 'no-referrer',
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
-    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+    'X-Permitted-Cross-Domain-Policies': 'none',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
     'Cross-Origin-Opener-Policy': 'same-origin',
     'Cross-Origin-Resource-Policy': 'same-origin',
+    'Strict-Transport-Security': 'max-age=31536000; includeSubDomains'
+  };
+}
+
+function securityHeaders(nonce) {
+  return {
+    ...commonSecurityHeaders(),
+    'Content-Type': 'text/html; charset=utf-8',
     'Content-Security-Policy': [
       "default-src 'none'",
       `script-src 'nonce-${nonce}'`,
       `style-src 'nonce-${nonce}'`,
+      "object-src 'none'",
       "base-uri 'none'",
       "form-action 'none'",
       "frame-ancestors 'none'",
@@ -36,7 +45,12 @@ async function handleRequest(request) {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     return new Response('Method Not Allowed', {
       status: 405,
-      headers: { Allow: 'GET, HEAD' }
+      headers: {
+        ...commonSecurityHeaders(),
+        Allow: 'GET, HEAD',
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'"
+      }
     });
   }
 
@@ -79,7 +93,7 @@ function getHTML(nonce) {
   <p class="hint">密钥仅在本机浏览器计算，不会发送到服务器。</p>
 
   <div class="secret-row">
-    <input type="password" id="secretInput" placeholder="JBSW Y3DP EHPK 3PXP" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <input type="password" id="secretInput" placeholder="JBSW Y3DP EHPK 3PXP" autocomplete="new-password" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true">
     <button type="button" class="btn-toggle" id="toggleSecret" aria-pressed="false">显示</button>
   </div>
 
