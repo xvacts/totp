@@ -77,6 +77,22 @@ function getHTML(nonce) {
     .secret-row { display: flex; gap: 8px; margin: 15px 0; }
     input { flex: 1; width: 100%; padding: 14px; font-size: 18px; border: 2px solid #ccc; border-radius: 8px; box-sizing: border-box; }
     .totp { font-size: 68px; letter-spacing: 18px; font-weight: bold; color: #0066ff; background: white; padding: 25px; border: 4px solid #0066ff; border-radius: 16px; margin: 30px 0; min-height: 88px; }
+    .countdown { margin: -12px 0 24px; text-align: left; }
+    .countdown[hidden] { display: none; }
+    .countdown-label { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: #475569; font-size: 14px; }
+    .countdown-label strong { color: #2563eb; font-variant-numeric: tabular-nums; }
+    .countdown progress { display: block; width: 100%; height: 10px; border: 0; border-radius: 999px; overflow: hidden; background: #e2e8f0; accent-color: #2563eb; }
+    .countdown progress::-webkit-progress-bar { background: #e2e8f0; border-radius: 999px; }
+    .countdown progress::-webkit-progress-value { background: #2563eb; border-radius: 999px; }
+    .countdown progress::-moz-progress-bar { background: #2563eb; border-radius: 999px; }
+    .countdown.expiring strong { color: #b45309; }
+    .countdown.expiring progress { accent-color: #f59e0b; }
+    .countdown.expiring progress::-webkit-progress-value { background: #f59e0b; }
+    .countdown.expiring progress::-moz-progress-bar { background: #f59e0b; }
+    .countdown.critical strong { color: #dc2626; }
+    .countdown.critical progress { accent-color: #ef4444; }
+    .countdown.critical progress::-webkit-progress-value { background: #ef4444; }
+    .countdown.critical progress::-moz-progress-bar { background: #ef4444; }
     button { padding: 14px 28px; margin: 8px; font-size: 17px; border: none; border-radius: 8px; cursor: pointer; }
     .btn-generate { background: #0070f3; color: white; }
     .btn-copy { background: #10b981; color: white; }
@@ -99,6 +115,14 @@ function getHTML(nonce) {
 
   <div class="totp" id="totpCode">------</div>
 
+  <div class="countdown" id="countdown" hidden>
+    <div class="countdown-label">
+      <span>当前验证码剩余有效时间</span>
+      <strong id="countdownText">30 秒</strong>
+    </div>
+    <progress id="countdownProgress" max="30000" value="0" aria-label="当前验证码剩余有效时间"></progress>
+  </div>
+
   <div class="status" id="status">请输入密钥后点击生成</div>
 
   <div>
@@ -109,12 +133,36 @@ function getHTML(nonce) {
 
   <script nonce="${nonce}">
     const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    const PERIOD_MS = 30000;
     let generating = false;
+    let generatedStep = null;
+    let generatedInput = "";
 
     const secretInput = document.getElementById("secretInput");
     const totpCodeEl = document.getElementById("totpCode");
     const statusEl = document.getElementById("status");
     const toggleBtn = document.getElementById("toggleSecret");
+    const countdownEl = document.getElementById("countdown");
+    const countdownText = document.getElementById("countdownText");
+    const countdownProgress = document.getElementById("countdownProgress");
+
+    function updateCountdown() {
+      const now = Date.now();
+      const active = generatedStep !== null && generatedInput === secretInput.value.trim()
+        && /^\\d{6}$/.test(totpCodeEl.textContent);
+      countdownEl.hidden = !active;
+      if (!active) return;
+
+      // TOTP uses wall-clock boundaries, not 30 seconds from clicking Generate.
+      const remaining = generatedStep === Math.floor(now / PERIOD_MS)
+        ? PERIOD_MS - (now % PERIOD_MS) : 0;
+      const seconds = Math.ceil(remaining / 1000);
+      countdownProgress.value = remaining;
+      countdownProgress.setAttribute("aria-valuetext", "剩余 " + seconds + " 秒");
+      countdownText.textContent = remaining ? seconds + " 秒" : "正在刷新…";
+      countdownEl.classList.toggle("expiring", remaining <= 10000);
+      countdownEl.classList.toggle("critical", remaining <= 5000);
+    }
 
     function setStatus(message, kind) {
       statusEl.textContent = message;
@@ -160,7 +208,7 @@ function getHTML(nonce) {
           throw new Error("empty-key");
         }
 
-        const timeStep = Math.floor(Date.now() / 1000 / 30);
+        const timeStep = Math.floor(Date.now() / PERIOD_MS);
         const buffer = new ArrayBuffer(8);
         new DataView(buffer).setBigUint64(0, BigInt(timeStep), false);
 
@@ -187,10 +235,19 @@ function getHTML(nonce) {
                    (hmacArray[offset + 3] & 0xff);
 
         const totp = (code % 1000000).toString().padStart(6, "0");
+        // A pending crypto operation must not restore a cleared or changed key.
+        if (secretInput.value.trim() !== input) return;
         totpCodeEl.textContent = totp;
+        generatedStep = timeStep;
+        generatedInput = input;
+        updateCountdown();
         setStatus("生成成功（每30秒自动刷新）", "ok");
       } catch (e) {
+        if (secretInput.value.trim() !== input) return;
         totpCodeEl.textContent = "错误";
+        generatedStep = null;
+        generatedInput = "";
+        updateCountdown();
         setStatus("密钥格式错误", "error");
       } finally {
         generating = false;
@@ -218,6 +275,9 @@ function getHTML(nonce) {
     function clearAll() {
       secretInput.value = "";
       totpCodeEl.textContent = "------";
+      generatedStep = null;
+      generatedInput = "";
+      updateCountdown();
       setStatus("已清除");
     }
 
@@ -231,6 +291,11 @@ function getHTML(nonce) {
     document.getElementById("btnGenerate").addEventListener("click", generateTOTP);
     document.getElementById("btnCopy").addEventListener("click", copyCode);
     document.getElementById("btnClear").addEventListener("click", clearAll);
+    secretInput.addEventListener("input", updateCountdown);
+    document.addEventListener("visibilitychange", () => {
+      updateCountdown();
+      if (!document.hidden && secretInput.value.trim()) generateTOTP();
+    });
     document.addEventListener("keydown", e => {
       if (e.key === "Enter") generateTOTP();
     });
@@ -238,6 +303,7 @@ function getHTML(nonce) {
     setInterval(() => {
       if (secretInput.value.trim()) generateTOTP();
     }, 1000);
+    setInterval(updateCountdown, 250);
   </script>
 </body>
 </html>`;
